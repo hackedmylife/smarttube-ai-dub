@@ -6,6 +6,8 @@ on:
     paths:
       - "payload/**"
       - ".github/workflows/build-ai-dub-apk.yml"
+  pull_request:
+    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
