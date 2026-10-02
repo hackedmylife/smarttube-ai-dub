@@ -150,8 +150,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     @Override
     public void onClosed() {
         if (running.get() && state != AiDubState.ERROR) {
-            setState(AiDubState.ERROR,
-                    new IllegalStateException("Gemini Live connection closed unexpectedly"));
+            onError(new IllegalStateException("Gemini Live connection closed unexpectedly"));
         }
     }
 
