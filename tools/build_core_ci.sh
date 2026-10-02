@@ -32,6 +32,10 @@ cp -R "$ROOT/overlay_src/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv
 cp "$ROOT/overlay_src/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/playback/actions/AiDubAction.java" \
   "$UPSTREAM/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/playback/actions/AiDubAction.java"
 
+mkdir -p "$UPSTREAM/common/src/stbeta/res/values"
+cp "$ROOT/overlay_src/common/src/stbeta/res/values/update_urls.xml" \
+  "$UPSTREAM/common/src/stbeta/res/values/update_urls.xml"
+
 python3 - "$UPSTREAM" <<'PY'
 from pathlib import Path
 import sys
