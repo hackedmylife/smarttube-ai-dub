@@ -126,7 +126,11 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     @Override
     public void onAudioPipelineFlushed() {
-        flush();
+        // ExoPlayer may flush individual audio processors during ordinary
+        // renderer maintenance. Treating every processor flush as a semantic
+        // playback discontinuity used to erase translated audio mid-sentence.
+        // Real seeks/timeline jumps are handled by AiDubController through
+        // onPositionDiscontinuity(), where a full reconnect/reset is correct.
     }
 
     @Override
