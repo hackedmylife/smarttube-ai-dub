@@ -15,6 +15,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
+import okio.ByteString;
 
 public final class GeminiLiveTranslationClient {
     public interface Listener {
@@ -301,6 +302,13 @@ public final class GeminiLiveTranslationClient {
         public void onMessage(WebSocket socket, String text) {
             if (isCurrentGeneration(generation)) {
                 handleMessage(text);
+            }
+        }
+
+        @Override
+        public void onMessage(WebSocket socket, ByteString bytes) {
+            if (isCurrentGeneration(generation)) {
+                handleMessage(bytes.utf8());
             }
         }
 
