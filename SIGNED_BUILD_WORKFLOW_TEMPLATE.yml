@@ -1,0 +1,44 @@
+name: Build SmartTube AI Dub Signed
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ai-dub-core
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout AI Dub repository
+        uses: actions/checkout@v4
+        with:
+          ref: ai-dub-core
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build permanently signed SmartTube AI Dub
+        shell: bash
+        env:
+          AIDUB_KEYSTORE_B64: ${{ secrets.AIDUB_KEYSTORE_B64 }}
+          AIDUB_KEYSTORE_PASSWORD: ${{ secrets.AIDUB_KEYSTORE_PASSWORD }}
+        run: |
+          chmod +x tools/build_core_ci.sh
+          ./tools/build_core_ci.sh
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartTube-AI-Dub-Signed-APK
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 30
