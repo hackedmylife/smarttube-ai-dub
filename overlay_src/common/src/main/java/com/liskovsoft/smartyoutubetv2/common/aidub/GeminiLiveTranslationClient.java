@@ -27,6 +27,7 @@ public final class GeminiLiveTranslationClient {
     }
 
     private static final long SETUP_TIMEOUT_MS = 8_000L;
+    private static final String PREFERRED_VOICE_NAME = "Sulafat";
 
     private final OkHttpClient httpClient;
     private final GeminiEndpointProvider endpointProvider;
@@ -139,11 +140,20 @@ public final class GeminiLiveTranslationClient {
                 .put("targetLanguageCode", AiDubConfig.TARGET_LANGUAGE)
                 .put("echoTargetLanguage", false);
 
+        // Gemini Live supports selecting a prebuilt output voice through
+        // generationConfig.speechConfig. A warmer voice reduces the synthetic
+        // TTS character without changing the low-latency translation pipeline.
+        JSONObject speechConfig = new JSONObject()
+                .put("voiceConfig", new JSONObject()
+                        .put("prebuiltVoiceConfig", new JSONObject()
+                                .put("voiceName", PREFERRED_VOICE_NAME)));
+
         // Keep the raw WebSocket setup intentionally minimal. Transcription is
         // optional and not used by SmartTube AI Dub, and Gemini's current
         // endpoints expose conflicting placement rules for those fields.
         JSONObject generationConfig = new JSONObject()
                 .put("responseModalities", new JSONArray().put("AUDIO"))
+                .put("speechConfig", speechConfig)
                 .put("translationConfig", translationConfig);
 
         JSONObject setup = new JSONObject()
