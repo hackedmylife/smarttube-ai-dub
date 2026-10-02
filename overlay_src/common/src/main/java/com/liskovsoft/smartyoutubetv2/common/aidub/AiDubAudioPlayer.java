@@ -7,14 +7,19 @@ import android.media.AudioTrack;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class AiDubAudioPlayer {
     private final LinkedBlockingDeque<byte[]> queue =
             new LinkedBlockingDeque<>(AiDubConfig.MAX_PENDING_OUTPUT_CHUNKS);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean paused = new AtomicBoolean(false);
+    private final AtomicInteger playbackGeneration = new AtomicInteger(0);
+
     private volatile AudioTrack audioTrack;
     private volatile Thread workerThread;
+    private volatile boolean playbackStarted;
+    private volatile int prebufferedBytes;
 
     public synchronized void start() {
         if (running.get()) return;
@@ -24,7 +29,10 @@ public final class AiDubAudioPlayer {
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT);
         if (minBuffer <= 0) minBuffer = AiDubConfig.GEMINI_OUTPUT_SAMPLE_RATE_HZ;
-        int bufferSize = Math.max(minBuffer * 2, AiDubConfig.GEMINI_OUTPUT_SAMPLE_RATE_HZ);
+
+        int bufferSize = Math.max(
+                minBuffer * 2,
+                AiDubConfig.OUTPUT_AUDIO_TRACK_BUFFER_BYTES);
 
         audioTrack = new AudioTrack(
                 AudioManager.STREAM_MUSIC,
@@ -40,9 +48,15 @@ public final class AiDubAudioPlayer {
             throw new IllegalStateException("Unable to initialize AI dub AudioTrack");
         }
 
+        queue.clear();
+        prebufferedBytes = 0;
+        playbackStarted = false;
         paused.set(false);
         running.set(true);
-        audioTrack.play();
+        playbackGeneration.incrementAndGet();
+
+        // Do not call play() yet. We first seed AudioTrack with a small amount
+        // of translated PCM so network jitter does not become audible gaps.
         workerThread = new Thread(this::runWriter, "AiDubAudioWriter");
         workerThread.start();
     }
@@ -61,19 +75,26 @@ public final class AiDubAudioPlayer {
         AudioTrack track = audioTrack;
         if (track == null) return;
         try {
-            if (pause) track.pause(); else track.play();
+            if (pause) {
+                track.pause();
+            } else if (playbackStarted) {
+                track.play();
+            }
         } catch (IllegalStateException ignored) {
         }
     }
 
     public synchronized void flush() {
         queue.clear();
+        prebufferedBytes = 0;
+        playbackStarted = false;
+        playbackGeneration.incrementAndGet();
+
         AudioTrack track = audioTrack;
         if (track != null) {
             try {
                 track.pause();
                 track.flush();
-                if (running.get() && !paused.get()) track.play();
             } catch (IllegalStateException ignored) {
             }
         }
@@ -83,6 +104,10 @@ public final class AiDubAudioPlayer {
         if (!running.getAndSet(false)) return;
         paused.set(false);
         queue.clear();
+        playbackStarted = false;
+        prebufferedBytes = 0;
+        playbackGeneration.incrementAndGet();
+
         Thread worker = workerThread;
         workerThread = null;
         if (worker != null) worker.interrupt();
@@ -107,19 +132,46 @@ public final class AiDubAudioPlayer {
                     Thread.sleep(20L);
                     continue;
                 }
+
                 byte[] data = queue.pollFirst(250, TimeUnit.MILLISECONDS);
                 if (data == null) continue;
+
                 AudioTrack track = audioTrack;
                 if (track == null) continue;
-                int offset = 0;
-                while (running.get() && !paused.get() && offset < data.length) {
-                    int written = track.write(data, offset, data.length - offset);
-                    if (written <= 0) break;
-                    offset += written;
-                }
+                int generation = playbackGeneration.get();
+                writeChunk(track, data, generation);
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
                 return;
+            }
+        }
+    }
+
+    private void writeChunk(AudioTrack track, byte[] data, int generation) {
+        int offset = 0;
+        while (running.get()
+                && !paused.get()
+                && generation == playbackGeneration.get()
+                && offset < data.length) {
+            int written;
+            try {
+                written = track.write(data, offset, data.length - offset);
+            } catch (IllegalStateException error) {
+                return;
+            }
+            if (written <= 0) return;
+            offset += written;
+
+            if (!playbackStarted && generation == playbackGeneration.get()) {
+                prebufferedBytes += written;
+                if (prebufferedBytes >= AiDubConfig.OUTPUT_PREBUFFER_BYTES && !paused.get()) {
+                    try {
+                        track.play();
+                        playbackStarted = true;
+                    } catch (IllegalStateException ignored) {
+                        return;
+                    }
+                }
             }
         }
     }
