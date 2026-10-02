@@ -1,4 +1,4 @@
-name: Build SmartTube AI Dub Core
+name: Build SmartTube AI Dub Signed
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ on:
       - ai-dub-core
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -26,16 +26,27 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Build SmartTube 32.56s with AI Dub core
+      - name: Build permanently signed SmartTube AI Dub
         shell: bash
+        env:
+          AIDUB_KEYSTORE_B64: ${{ secrets.AIDUB_KEYSTORE_B64 }}
+          AIDUB_KEYSTORE_PASSWORD: ${{ secrets.AIDUB_KEYSTORE_PASSWORD }}
         run: |
           chmod +x tools/build_core_ci.sh
           ./tools/build_core_ci.sh
 
+      - name: Publish in-app update channel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x tools/publish_update.sh
+          ./tools/publish_update.sh
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: SmartTube-AI-Dub-Core-APK
+          name: SmartTube-AI-Dub-Signed-APK
           path: out/*.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
