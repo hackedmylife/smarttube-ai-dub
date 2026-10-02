@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import okhttp3.OkHttpClient;
 
 public final class AiDubSession implements AiDubRuntime.PcmSink,
-        GeminiLiveTranslationClient.Listener {
+        GeminiNaturalDubClient.Listener {
 
     public interface Listener {
         void onStateChanged(AiDubState state, Throwable error);
@@ -27,7 +27,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     }
 
     private final Listener listener;
-    private final GeminiLiveTranslationClient liveClient;
+    private final GeminiNaturalDubClient naturalDubClient;
     private final AiDubAudioPlayer audioPlayer = new AiDubAudioPlayer();
     private final Pcm16Resampler resampler =
             new Pcm16Resampler(AiDubConfig.GEMINI_INPUT_SAMPLE_RATE_HZ);
@@ -47,10 +47,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
             GeminiEndpointProvider endpointProvider,
             Listener listener) {
         this.listener = listener;
-        this.liveClient = new GeminiLiveTranslationClient(httpClient, endpointProvider, this);
+        this.naturalDubClient = new GeminiNaturalDubClient(httpClient, endpointProvider, this);
         this.chunker = new PcmChunker(
                 AiDubConfig.INPUT_CHUNK_BYTES,
-                liveClient::sendPcm16kMono);
+                naturalDubClient::sendPcm16kMono);
     }
 
     public synchronized void start() {
@@ -65,7 +65,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
             AiDubRuntime.setActiveSink(this);
             captureWorker = new Thread(this::runCaptureWorker, "AiDubCaptureWorker");
             captureWorker.start();
-            liveClient.connect();
+            naturalDubClient.connect();
         } catch (Throwable error) {
             running.set(false);
             AiDubRuntime.clearActiveSink(this);
@@ -83,7 +83,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         captureWorker = null;
         if (worker != null) worker.interrupt();
         resetPipeline();
-        liveClient.close();
+        naturalDubClient.close();
         audioPlayer.stop();
         setState(AiDubState.OFF, null);
     }
@@ -106,7 +106,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         if (!running.get() || state == AiDubState.ERROR) return;
         resetPipeline();
         setState(AiDubState.CONNECTING, null);
-        liveClient.reconnect();
+        naturalDubClient.reconnect();
     }
 
     @Override
@@ -127,15 +127,13 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     @Override
     public void onAudioPipelineFlushed() {
         // ExoPlayer may flush individual audio processors during ordinary
-        // renderer maintenance. Treating every processor flush as a semantic
-        // playback discontinuity used to erase translated audio mid-sentence.
-        // Real seeks/timeline jumps are handled by AiDubController through
-        // onPositionDiscontinuity(), where a full reconnect/reset is correct.
+        // renderer maintenance. Real seeks/timeline jumps are handled by the
+        // controller's onPositionDiscontinuity() path.
     }
 
     @Override
     public void onReady() {
-        listener.onDiagnostic("Gemini hazır");
+        listener.onDiagnostic("Doğal dublaj transkripsiyonu hazır");
         setState(AiDubState.READY, null);
     }
 
@@ -146,7 +144,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
                 && pcm24kMono16Le != null && pcm24kMono16Le.length > 0) {
             if (!firstTranslatedPcmNotified) {
                 firstTranslatedPcmNotified = true;
-                listener.onDiagnostic("Türkçe PCM geldi");
+                listener.onDiagnostic("Doğal Türkçe dublaj sesi geldi");
             }
             if (state == AiDubState.READY) {
                 setState(AiDubState.DUBBING, null);
@@ -160,7 +158,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         if (running.get() && state != AiDubState.ERROR) {
             AiDubRuntime.clearActiveSink(this);
             resetPipeline();
-            liveClient.close();
+            naturalDubClient.close();
             setState(AiDubState.ERROR, error);
         }
     }
@@ -177,7 +175,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
                     ? ""
                     : " - " + reason.trim();
             onError(new IllegalStateException(
-                    "Gemini Live closed (" + code + ")" + detail));
+                    "Gemini Transcribe closed (" + code + ")" + detail));
         }
     }
 
@@ -204,7 +202,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         captureQueue.clear();
         resampler.reset();
         chunker.reset();
-        liveClient.resetPendingInput();
+        naturalDubClient.resetPendingInput();
         audioPlayer.flush();
     }
 
