@@ -1,7 +1,5 @@
 package com.liskovsoft.smartyoutubetv2.tv.ui.playback.aidub;
 
-import android.net.Uri;
-
 import com.liskovsoft.smartyoutubetv2.common.aidub.GeminiEndpointProvider;
 
 public final class GeminiApiKeyEndpointProvider implements GeminiEndpointProvider {
@@ -17,10 +15,15 @@ public final class GeminiApiKeyEndpointProvider implements GeminiEndpointProvide
 
     @Override
     public String getWebSocketUrl() {
+        return BASE_URL;
+    }
+
+    @Override
+    public String getApiKeyHeader() {
         String apiKey = keyStore.getApiKey();
         if (apiKey == null || apiKey.trim().isEmpty()) {
             throw new IllegalStateException("Gemini API key is not configured");
         }
-        return BASE_URL + "?key=" + Uri.encode(apiKey.trim());
+        return apiKey.trim();
     }
 }
