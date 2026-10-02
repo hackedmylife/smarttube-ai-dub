@@ -137,7 +137,7 @@ public final class AiDubUiController {
             setButtonEnabled(false);
             Toast.makeText(
                     context,
-                    "AI Dublaj bağlantı hatası",
+                    describeError(error),
                     Toast.LENGTH_LONG).show();
         } else if (state == AiDubState.OFF) {
             setButtonEnabled(false);
@@ -146,6 +146,36 @@ public final class AiDubUiController {
                 || state == AiDubState.DUBBING) {
             setButtonEnabled(true);
         }
+    }
+
+    private String describeError(Throwable error) {
+        String message = error == null ? "" : error.getMessage();
+        if (message == null) {
+            message = "";
+        }
+
+        if (message.contains("401")) {
+            return "AI Dublaj: API anahtarı geçersiz veya yetkisiz (401)";
+        }
+        if (message.contains("403")) {
+            return "AI Dublaj: API anahtarının Gemini erişimi engelli (403)";
+        }
+        if (message.contains("404")) {
+            return "AI Dublaj: model veya Live API bulunamadı (404)";
+        }
+        if (message.contains("429")) {
+            return "AI Dublaj: Gemini kota sınırına ulaşıldı (429)";
+        }
+        if (message.contains("400") || message.contains("INVALID_ARGUMENT")) {
+            return "AI Dublaj: Gemini oturum ayarını reddetti (400)";
+        }
+        if (message.contains("SSL")) {
+            return "AI Dublaj: güvenli bağlantı/TLS hatası";
+        }
+        if (!message.isEmpty()) {
+            return "AI Dublaj bağlantı hatası: " + message;
+        }
+        return "AI Dublaj bağlantı hatası";
     }
 
     private void setButtonEnabled(boolean value) {
