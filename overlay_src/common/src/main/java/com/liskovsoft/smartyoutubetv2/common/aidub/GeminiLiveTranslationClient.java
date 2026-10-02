@@ -75,7 +75,7 @@ public final class GeminiLiveTranslationClient {
             }
         } catch (Throwable error) {
             if (isCurrentGeneration(generation)) {
-                listener.onError(error);
+                listener.onError(safeTransportError(error, null));
             }
         }
     }
@@ -169,6 +169,16 @@ public final class GeminiLiveTranslationClient {
     private void handleMessage(String text) {
         try {
             JSONObject root = new JSONObject(text);
+
+            JSONObject apiError = root.optJSONObject("error");
+            if (apiError != null) {
+                int code = apiError.optInt("code", -1);
+                String status = apiError.optString("status", "");
+                listener.onError(new IOException(
+                        "Gemini API " + code + (status.isEmpty() ? "" : " " + status)));
+                return;
+            }
+
             if (root.has("setupComplete")) {
                 markSetupComplete();
                 return;
@@ -198,6 +208,14 @@ public final class GeminiLiveTranslationClient {
         }
     }
 
+    private static IOException safeTransportError(Throwable error, Response response) {
+        if (response != null) {
+            return new IOException("Gemini WebSocket HTTP " + response.code());
+        }
+        String type = error == null ? "Unknown" : error.getClass().getSimpleName();
+        return new IOException("Gemini WebSocket " + type);
+    }
+
     private boolean isCurrentGeneration(long generation) {
         synchronized (lock) {
             return !closed && generation == connectionGeneration;
@@ -225,7 +243,7 @@ public final class GeminiLiveTranslationClient {
                     throw new IOException("Gemini WebSocket rejected setup frame");
                 }
             } catch (Throwable error) {
-                listener.onError(error);
+                listener.onError(new IOException("Gemini setup frame failed"));
                 socket.close(1011, "setup failed");
             }
         }
@@ -259,7 +277,7 @@ public final class GeminiLiveTranslationClient {
                 setupComplete = false;
                 webSocket = null;
             }
-            listener.onError(t);
+            listener.onError(safeTransportError(t, response));
         }
     }
 }
