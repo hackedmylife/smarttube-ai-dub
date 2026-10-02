@@ -1,0 +1,189 @@
+package com.liskovsoft.smartyoutubetv2.common.aidub;
+
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import okhttp3.OkHttpClient;
+
+public final class AiDubSession implements AiDubRuntime.PcmSink,
+        GeminiLiveTranslationClient.Listener {
+
+    public interface Listener {
+        void onStateChanged(AiDubState state, Throwable error);
+    }
+
+    private static final class CapturedPcm {
+        final byte[] data;
+        final int sampleRateHz;
+        final int channelCount;
+
+        CapturedPcm(byte[] data, int sampleRateHz, int channelCount) {
+            this.data = data;
+            this.sampleRateHz = sampleRateHz;
+            this.channelCount = channelCount;
+        }
+    }
+
+    private final Listener listener;
+    private final GeminiLiveTranslationClient liveClient;
+    private final AiDubAudioPlayer audioPlayer = new AiDubAudioPlayer();
+    private final Pcm16Resampler resampler =
+            new Pcm16Resampler(AiDubConfig.GEMINI_INPUT_SAMPLE_RATE_HZ);
+    private final PcmChunker chunker;
+    private final LinkedBlockingDeque<CapturedPcm> captureQueue =
+            new LinkedBlockingDeque<>(AiDubConfig.MAX_PENDING_INPUT_CHUNKS * 2);
+    private final AtomicBoolean running = new AtomicBoolean(false);
+    private final AtomicBoolean paused = new AtomicBoolean(false);
+
+    private volatile Thread captureWorker;
+    private volatile AiDubState state = AiDubState.OFF;
+
+    public AiDubSession(
+            OkHttpClient httpClient,
+            GeminiEndpointProvider endpointProvider,
+            Listener listener) {
+        this.listener = listener;
+        this.liveClient = new GeminiLiveTranslationClient(httpClient, endpointProvider, this);
+        this.chunker = new PcmChunker(
+                AiDubConfig.INPUT_CHUNK_BYTES,
+                liveClient::sendPcm16kMono);
+    }
+
+    public synchronized void start() {
+        if (running.get()) return;
+        paused.set(false);
+        setState(AiDubState.CONNECTING, null);
+        try {
+            audioPlayer.start();
+            running.set(true);
+            AiDubRuntime.setActiveSink(this);
+            captureWorker = new Thread(this::runCaptureWorker, "AiDubCaptureWorker");
+            captureWorker.start();
+            liveClient.connect();
+        } catch (Throwable error) {
+            running.set(false);
+            AiDubRuntime.clearActiveSink(this);
+            captureWorker = null;
+            audioPlayer.stop();
+            setState(AiDubState.ERROR, error);
+        }
+    }
+
+    public synchronized void stop() {
+        if (!running.getAndSet(false)) return;
+        paused.set(false);
+        AiDubRuntime.clearActiveSink(this);
+        Thread worker = captureWorker;
+        captureWorker = null;
+        if (worker != null) worker.interrupt();
+        resetPipeline();
+        liveClient.close();
+        audioPlayer.stop();
+        setState(AiDubState.OFF, null);
+    }
+
+    public synchronized void setPaused(boolean pause) {
+        if (!running.get() || paused.getAndSet(pause) == pause) return;
+        if (pause) {
+            audioPlayer.setPaused(true);
+            resetPipeline();
+        } else {
+            audioPlayer.setPaused(false);
+        }
+    }
+
+    public synchronized void flush() {
+        if (running.get()) resetPipeline();
+    }
+
+    public synchronized void restartAfterDiscontinuity() {
+        if (!running.get() || state == AiDubState.ERROR) return;
+        resetPipeline();
+        setState(AiDubState.CONNECTING, null);
+        liveClient.reconnect();
+    }
+
+    @Override
+    public void onPcm16(byte[] pcm16Le, int sampleRateHz, int channelCount) {
+        if (!running.get() || paused.get() || state == AiDubState.ERROR
+                || pcm16Le == null || pcm16Le.length == 0) return;
+        CapturedPcm captured = new CapturedPcm(pcm16Le, sampleRateHz, channelCount);
+        if (!captureQueue.offerLast(captured)) {
+            captureQueue.pollFirst();
+            captureQueue.offerLast(captured);
+        }
+    }
+
+    @Override
+    public void onAudioPipelineFlushed() {
+        flush();
+    }
+
+    @Override
+    public void onReady() {
+        setState(AiDubState.READY, null);
+    }
+
+    @Override
+    public void onTranslatedPcm(byte[] pcm24kMono16Le) {
+        if (running.get() && !paused.get()
+                && (state == AiDubState.READY || state == AiDubState.DUBBING)
+                && pcm24kMono16Le != null && pcm24kMono16Le.length > 0) {
+            if (state == AiDubState.READY) {
+                setState(AiDubState.DUBBING, null);
+            }
+            audioPlayer.enqueue(pcm24kMono16Le);
+        }
+    }
+
+    @Override
+    public void onError(Throwable error) {
+        if (running.get() && state != AiDubState.ERROR) {
+            AiDubRuntime.clearActiveSink(this);
+            resetPipeline();
+            liveClient.close();
+            setState(AiDubState.ERROR, error);
+        }
+    }
+
+    @Override
+    public void onClosed() {
+        if (running.get() && state != AiDubState.ERROR) {
+            setState(AiDubState.ERROR,
+                    new IllegalStateException("Gemini Live connection closed unexpectedly"));
+        }
+    }
+
+    private void runCaptureWorker() {
+        while (running.get()) {
+            try {
+                CapturedPcm captured = captureQueue.pollFirst(250, TimeUnit.MILLISECONDS);
+                if (captured == null || paused.get()) continue;
+                byte[] converted = resampler.toMono(
+                        captured.data,
+                        captured.sampleRateHz,
+                        captured.channelCount);
+                chunker.offer(converted);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Throwable error) {
+                onError(error);
+            }
+        }
+    }
+
+    private void resetPipeline() {
+        captureQueue.clear();
+        resampler.reset();
+        chunker.reset();
+        liveClient.resetPendingInput();
+        audioPlayer.flush();
+    }
+
+    private void setState(AiDubState next, Throwable error) {
+        state = next;
+        listener.onStateChanged(next, error);
+    }
+}
