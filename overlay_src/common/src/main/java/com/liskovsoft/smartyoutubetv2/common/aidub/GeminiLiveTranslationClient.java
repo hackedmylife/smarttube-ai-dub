@@ -68,7 +68,15 @@ public final class GeminiLiveTranslationClient {
             if (!isCurrentGeneration(generation)) {
                 return;
             }
-            Request request = new Request.Builder().url(endpoint).build();
+            String apiKey = endpointProvider.getApiKeyHeader();
+            if (apiKey == null || apiKey.trim().isEmpty()) {
+                throw new IllegalStateException("Gemini API key is empty");
+            }
+
+            Request request = new Request.Builder()
+                    .url(endpoint)
+                    .header("x-goog-api-key", apiKey.trim())
+                    .build();
             WebSocket socket = httpClient.newWebSocket(request, new SocketListener(generation));
             if (!isCurrentGeneration(generation)) {
                 socket.close(1000, "stale AI dub endpoint");
