@@ -138,12 +138,11 @@ public final class GeminiLiveTranslationClient {
                 .put("targetLanguageCode", AiDubConfig.TARGET_LANGUAGE)
                 .put("echoTargetLanguage", false);
 
-        // Current Gemini Live Translation WebSocket schema places translation
-        // and transcription configuration under generationConfig.
+        // Keep the raw WebSocket setup intentionally minimal. Transcription is
+        // optional and not used by SmartTube AI Dub, and Gemini's current
+        // endpoints expose conflicting placement rules for those fields.
         JSONObject generationConfig = new JSONObject()
                 .put("responseModalities", new JSONArray().put("AUDIO"))
-                .put("inputAudioTranscription", new JSONObject())
-                .put("outputAudioTranscription", new JSONObject())
                 .put("translationConfig", translationConfig);
 
         JSONObject setup = new JSONObject()
