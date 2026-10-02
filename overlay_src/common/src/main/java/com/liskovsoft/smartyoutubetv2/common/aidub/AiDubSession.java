@@ -11,6 +11,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     public interface Listener {
         void onStateChanged(AiDubState state, Throwable error);
+        default void onDiagnostic(String message) {}
     }
 
     private static final class CapturedPcm {
@@ -38,6 +39,8 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     private volatile Thread captureWorker;
     private volatile AiDubState state = AiDubState.OFF;
+    private volatile boolean firstCapturedPcmNotified;
+    private volatile boolean firstTranslatedPcmNotified;
 
     public AiDubSession(
             OkHttpClient httpClient,
@@ -53,6 +56,8 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     public synchronized void start() {
         if (running.get()) return;
         paused.set(false);
+        firstCapturedPcmNotified = false;
+        firstTranslatedPcmNotified = false;
         setState(AiDubState.CONNECTING, null);
         try {
             audioPlayer.start();
@@ -108,6 +113,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     public void onPcm16(byte[] pcm16Le, int sampleRateHz, int channelCount) {
         if (!running.get() || paused.get() || state == AiDubState.ERROR
                 || pcm16Le == null || pcm16Le.length == 0) return;
+        if (!firstCapturedPcmNotified) {
+            firstCapturedPcmNotified = true;
+            listener.onDiagnostic("SmartTube PCM yakalandı: " + sampleRateHz + " Hz / " + channelCount + " kanal");
+        }
         CapturedPcm captured = new CapturedPcm(pcm16Le, sampleRateHz, channelCount);
         if (!captureQueue.offerLast(captured)) {
             captureQueue.pollFirst();
@@ -122,6 +131,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     @Override
     public void onReady() {
+        listener.onDiagnostic("Gemini hazır");
         setState(AiDubState.READY, null);
     }
 
@@ -130,6 +140,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         if (running.get() && !paused.get()
                 && (state == AiDubState.READY || state == AiDubState.DUBBING)
                 && pcm24kMono16Le != null && pcm24kMono16Le.length > 0) {
+            if (!firstTranslatedPcmNotified) {
+                firstTranslatedPcmNotified = true;
+                listener.onDiagnostic("Türkçe PCM geldi");
+            }
             if (state == AiDubState.READY) {
                 setState(AiDubState.DUBBING, null);
             }
@@ -145,6 +159,11 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
             liveClient.close();
             setState(AiDubState.ERROR, error);
         }
+    }
+
+    @Override
+    public void onDiagnostic(String message) {
+        listener.onDiagnostic(message);
     }
 
     @Override
