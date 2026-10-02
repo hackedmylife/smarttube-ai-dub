@@ -25,6 +25,8 @@ public final class GeminiLiveTranslationClient {
         default void onDiagnostic(String message) {}
     }
 
+    private static final long SETUP_TIMEOUT_MS = 8_000L;
+
     private final OkHttpClient httpClient;
     private final GeminiEndpointProvider endpointProvider;
     private final Listener listener;
@@ -135,17 +137,18 @@ public final class GeminiLiveTranslationClient {
         JSONObject translationConfig = new JSONObject()
                 .put("targetLanguageCode", AiDubConfig.TARGET_LANGUAGE)
                 .put("echoTargetLanguage", false);
+
+        // Current Gemini Live Translation WebSocket schema places translation
+        // and transcription configuration under generationConfig.
         JSONObject generationConfig = new JSONObject()
                 .put("responseModalities", new JSONArray().put("AUDIO"))
+                .put("inputAudioTranscription", new JSONObject())
+                .put("outputAudioTranscription", new JSONObject())
                 .put("translationConfig", translationConfig);
+
         JSONObject setup = new JSONObject()
                 .put("model", AiDubConfig.MODEL)
-                .put("generationConfig", generationConfig)
-                // Gemini 3.5 Live Translate raw-WebSocket runtime currently
-                // accepts transcription config at setup root. Putting these
-                // fields under generationConfig is known to trigger close 1007.
-                .put("inputAudioTranscription", new JSONObject())
-                .put("outputAudioTranscription", new JSONObject());
+                .put("generationConfig", generationConfig);
         return new JSONObject().put("setup", setup).toString();
     }
 
@@ -191,8 +194,10 @@ public final class GeminiLiveTranslationClient {
             if (apiError != null) {
                 int code = apiError.optInt("code", -1);
                 String status = apiError.optString("status", "");
+                String message = apiError.optString("message", "");
+                String detail = message.isEmpty() ? "" : " - " + sanitizeCloseReason(message);
                 listener.onError(new IOException(
-                        "Gemini API " + code + (status.isEmpty() ? "" : " " + status)));
+                        "Gemini API " + code + (status.isEmpty() ? "" : " " + status) + detail));
                 return;
             }
 
@@ -223,6 +228,20 @@ public final class GeminiLiveTranslationClient {
         } catch (Throwable error) {
             listener.onError(error);
         }
+    }
+
+    private void startSetupWatchdog(final long generation) {
+        new Thread(() -> {
+            try {
+                Thread.sleep(SETUP_TIMEOUT_MS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (isCurrentGeneration(generation) && !setupComplete) {
+                listener.onError(new IOException("Gemini setup timeout (8s)"));
+            }
+        }, "AiDubGeminiSetupWatchdog").start();
     }
 
     private static String sanitizeCloseReason(String reason) {
@@ -266,10 +285,13 @@ public final class GeminiLiveTranslationClient {
                 }
                 webSocket = socket;
             }
+            listener.onDiagnostic("Gemini WebSocket açıldı");
             try {
                 if (!socket.send(createSetupJson())) {
                     throw new IOException("Gemini WebSocket rejected setup frame");
                 }
+                listener.onDiagnostic("Gemini setup gönderildi");
+                startSetupWatchdog(generation);
             } catch (Throwable error) {
                 listener.onError(new IOException("Gemini setup frame failed"));
                 socket.close(1011, "setup failed");
