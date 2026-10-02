@@ -7,7 +7,7 @@ on:
       - ai-dub-core
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -34,6 +34,14 @@ jobs:
         run: |
           chmod +x tools/build_core_ci.sh
           ./tools/build_core_ci.sh
+
+      - name: Publish in-app update channel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          chmod +x tools/publish_update.sh
+          ./tools/publish_update.sh
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
