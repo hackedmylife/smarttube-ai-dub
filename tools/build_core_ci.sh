@@ -53,11 +53,21 @@ PY
 
 python3 "$ROOT/tools/patch_tv_ui.py" "$UPSTREAM"
 
+python3 - "$UPSTREAM" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]) / "smarttubetv/src/stbeta/res/values/strings.xml"
+text = p.read_text(encoding="utf-8")
+text = text.replace("SmartTube beta", "SmartTube AI Dub")
+p.write_text(text, encoding="utf-8")
+print("Renamed beta flavor to SmartTube AI Dub")
+PY
+
 cd "$UPSTREAM"
 chmod +x gradlew
-./gradlew --no-daemon :smarttubetv:assembleStstableDebug
+./gradlew --no-daemon :smarttubetv:assembleStbetaDebug
 
 mkdir -p "$ROOT/out"
-find smarttubetv/build/outputs/apk/ststable/debug -type f -name '*.apk'   -exec cp {} "$ROOT/out/" \;
+find smarttubetv/build/outputs/apk/stbeta/debug -type f -name '*.apk'   -exec cp {} "$ROOT/out/" \;
 
 sha256sum "$ROOT"/out/*.apk
