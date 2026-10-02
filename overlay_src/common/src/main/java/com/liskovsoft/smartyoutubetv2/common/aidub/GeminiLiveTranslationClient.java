@@ -137,7 +137,12 @@ public final class GeminiLiveTranslationClient {
                 .put("translationConfig", translationConfig);
         JSONObject setup = new JSONObject()
                 .put("model", AiDubConfig.MODEL)
-                .put("generationConfig", generationConfig);
+                .put("generationConfig", generationConfig)
+                // Gemini 3.5 Live Translate raw-WebSocket runtime currently
+                // accepts transcription config at setup root. Putting these
+                // fields under generationConfig is known to trigger close 1007.
+                .put("inputAudioTranscription", new JSONObject())
+                .put("outputAudioTranscription", new JSONObject());
         return new JSONObject().put("setup", setup).toString();
     }
 
@@ -284,7 +289,10 @@ public final class GeminiLiveTranslationClient {
                 setupComplete = false;
                 webSocket = null;
             }
-            listener.onClosed(code, sanitizeCloseReason(reason));
+            String phase = setupComplete ? "after setupComplete" : "during setup";
+            listener.onClosed(code, phase + (reason == null || reason.trim().isEmpty()
+                    ? ""
+                    : " - " + sanitizeCloseReason(reason)));
         }
 
         @Override
