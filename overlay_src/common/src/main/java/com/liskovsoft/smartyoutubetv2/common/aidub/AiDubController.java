@@ -11,6 +11,7 @@ import okhttp3.OkHttpClient;
 public final class AiDubController implements AiDubSession.Listener, Player.EventListener {
     public interface Listener {
         void onStateChanged(AiDubState state, Throwable error);
+        default void onDiagnostic(String message) {}
     }
 
     private final SimpleExoPlayer player;
@@ -79,6 +80,15 @@ public final class AiDubController implements AiDubSession.Listener, Player.Even
             mutePolicy.onStateChanged(state);
         }
         listener.onStateChanged(state, error);
+    }
+
+    @Override
+    public void onDiagnostic(String message) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            listener.onDiagnostic(message);
+        } else {
+            mainHandler.post(() -> listener.onDiagnostic(message));
+        }
     }
 
     @Override
