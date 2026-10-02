@@ -5,11 +5,10 @@ import android.net.Uri;
 import com.liskovsoft.smartyoutubetv2.common.aidub.GeminiEndpointProvider;
 
 /**
- * Supplies the Gemini Live raw-WebSocket endpoint.
+ * Supplies Gemini Live and REST authentication from the same persisted TV key.
  *
- * Google Gemini's Live WebSocket guide authenticates normal API keys with the
- * `?key=` query parameter. This applies to the raw BidiGenerateContent socket;
- * ephemeral Live tokens use a different constrained endpoint/access_token flow.
+ * Raw BidiGenerateContent WebSocket auth uses the ?key= query parameter. The
+ * natural-dub REST stages reuse the same key through x-goog-api-key.
  */
 public final class GeminiApiKeyEndpointProvider implements GeminiEndpointProvider {
     private static final String BASE_URL =
@@ -39,5 +38,10 @@ public final class GeminiApiKeyEndpointProvider implements GeminiEndpointProvide
     public String getApiKeyHeader() {
         // Raw Gemini Live WebSocket auth uses the URL query parameter.
         return "";
+    }
+
+    @Override
+    public String getApiKey() {
+        return requireKey();
     }
 }
