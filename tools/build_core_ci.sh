@@ -12,6 +12,12 @@ git clone --recursive --branch 32.56s --depth 1   https://github.com/yuliskov/Sm
 
 cp -R "$ROOT/overlay_src/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/aidub"   "$UPSTREAM/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/"
 
+cp -R "$ROOT/overlay_src/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/playback/aidub" \
+  "$UPSTREAM/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/playback/"
+
+cp "$ROOT/overlay_src/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/playback/actions/AiDubAction.java" \
+  "$UPSTREAM/smarttubetv/src/main/java/com/liskovsoft/smartyoutubetv2/tv/ui/playback/actions/AiDubAction.java"
+
 python3 - "$UPSTREAM" <<'PY'
 from pathlib import Path
 import sys
@@ -44,6 +50,8 @@ if "audioProcessors = AiDubAudioProcessors.appendTap(audioProcessors);" not in t
 path.write_text(text, encoding="utf-8")
 print("Renderer patch applied")
 PY
+
+python3 "$ROOT/tools/patch_tv_ui.py" "$UPSTREAM"
 
 cd "$UPSTREAM"
 chmod +x gradlew
