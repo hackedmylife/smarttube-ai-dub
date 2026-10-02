@@ -22,6 +22,7 @@ public final class GeminiLiveTranslationClient {
         void onTranslatedPcm(byte[] pcm24kMono16Le);
         void onError(Throwable error);
         void onClosed(int code, String reason);
+        default void onDiagnostic(String message) {}
     }
 
     private final OkHttpClient httpClient;
@@ -33,6 +34,7 @@ public final class GeminiLiveTranslationClient {
     private volatile WebSocket webSocket;
     private volatile boolean setupComplete;
     private volatile boolean closed;
+    private volatile boolean firstAudioSentNotified;
     private long connectionGeneration;
 
     public GeminiLiveTranslationClient(
@@ -54,6 +56,7 @@ public final class GeminiLiveTranslationClient {
             setupComplete = false;
             pendingInput.clear();
             webSocket = null;
+            firstAudioSentNotified = false;
             generation = ++connectionGeneration;
         }
         new Thread(() -> openConnection(generation), "AiDubGeminiConnector").start();
@@ -158,6 +161,9 @@ public final class GeminiLiveTranslationClient {
             JSONObject realtimeInput = new JSONObject().put("audio", audio);
             if (!socket.send(new JSONObject().put("realtimeInput", realtimeInput).toString())) {
                 listener.onError(new IOException("Gemini WebSocket rejected audio frame"));
+            } else if (!firstAudioSentNotified) {
+                firstAudioSentNotified = true;
+                listener.onDiagnostic("Ses Gemini'ye gönderildi");
             }
         } catch (JSONException error) {
             listener.onError(error);
@@ -285,11 +291,12 @@ public final class GeminiLiveTranslationClient {
         @Override
         public void onClosed(WebSocket socket, int code, String reason) {
             if (!isCurrentGeneration(generation)) return;
+            final boolean wasSetupComplete = setupComplete;
             synchronized (lock) {
                 setupComplete = false;
                 webSocket = null;
             }
-            String phase = setupComplete ? "after setupComplete" : "during setup";
+            String phase = wasSetupComplete ? "after setupComplete" : "during setup";
             listener.onClosed(code, phase + (reason == null || reason.trim().isEmpty()
                     ? ""
                     : " - " + sanitizeCloseReason(reason)));
