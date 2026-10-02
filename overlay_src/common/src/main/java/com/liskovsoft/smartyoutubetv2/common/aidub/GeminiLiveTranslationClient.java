@@ -21,7 +21,7 @@ public final class GeminiLiveTranslationClient {
         void onReady();
         void onTranslatedPcm(byte[] pcm24kMono16Le);
         void onError(Throwable error);
-        void onClosed();
+        void onClosed(int code, String reason);
     }
 
     private final OkHttpClient httpClient;
@@ -68,15 +68,13 @@ public final class GeminiLiveTranslationClient {
             if (!isCurrentGeneration(generation)) {
                 return;
             }
-            String apiKey = endpointProvider.getApiKeyHeader();
-            if (apiKey == null || apiKey.trim().isEmpty()) {
-                throw new IllegalStateException("Gemini API key is empty");
-            }
+            String apiKeyHeader = endpointProvider.getApiKeyHeader();
 
-            Request request = new Request.Builder()
-                    .url(endpoint)
-                    .header("x-goog-api-key", apiKey.trim())
-                    .build();
+            Request.Builder requestBuilder = new Request.Builder().url(endpoint);
+            if (apiKeyHeader != null && !apiKeyHeader.trim().isEmpty()) {
+                requestBuilder.header("x-goog-api-key", apiKeyHeader.trim());
+            }
+            Request request = requestBuilder.build();
             WebSocket socket = httpClient.newWebSocket(request, new SocketListener(generation));
             if (!isCurrentGeneration(generation)) {
                 socket.close(1000, "stale AI dub endpoint");
@@ -216,6 +214,17 @@ public final class GeminiLiveTranslationClient {
         }
     }
 
+    private static String sanitizeCloseReason(String reason) {
+        if (reason == null) {
+            return "";
+        }
+        String value = reason.replaceAll("[\\r\\n\\t]+", " ").trim();
+        if (value.length() > 180) {
+            value = value.substring(0, 180);
+        }
+        return value;
+    }
+
     private static IOException safeTransportError(Throwable error, Response response) {
         if (response != null) {
             return new IOException("Gemini WebSocket HTTP " + response.code());
@@ -275,7 +284,7 @@ public final class GeminiLiveTranslationClient {
                 setupComplete = false;
                 webSocket = null;
             }
-            listener.onClosed();
+            listener.onClosed(code, sanitizeCloseReason(reason));
         }
 
         @Override
