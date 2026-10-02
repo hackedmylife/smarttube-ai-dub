@@ -139,15 +139,21 @@ public final class GeminiLiveTranslationClient {
                 .put("targetLanguageCode", AiDubConfig.TARGET_LANGUAGE)
                 .put("echoTargetLanguage", false);
 
-        // Keep Live Translate setup minimal and aligned with the configuration
-        // that is known to reach setupComplete reliably on the TV client.
         JSONObject generationConfig = new JSONObject()
                 .put("responseModalities", new JSONArray().put("AUDIO"))
                 .put("translationConfig", translationConfig);
 
+        // Continuous video audio is not a turn-taking microphone conversation.
+        // The Live API defaults to START_OF_ACTIVITY_INTERRUPTS, which may cut
+        // the currently generated Turkish sentence whenever new source speech
+        // is detected. NO_INTERRUPTION lets the current translation finish.
+        JSONObject realtimeInputConfig = new JSONObject()
+                .put("activityHandling", "NO_INTERRUPTION");
+
         JSONObject setup = new JSONObject()
                 .put("model", AiDubConfig.MODEL)
-                .put("generationConfig", generationConfig);
+                .put("generationConfig", generationConfig)
+                .put("realtimeInputConfig", realtimeInputConfig);
         return new JSONObject().put("setup", setup).toString();
     }
 
