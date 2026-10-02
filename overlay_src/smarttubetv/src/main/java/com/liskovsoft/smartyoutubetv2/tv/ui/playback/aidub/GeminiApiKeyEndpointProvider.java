@@ -4,6 +4,13 @@ import android.net.Uri;
 
 import com.liskovsoft.smartyoutubetv2.common.aidub.GeminiEndpointProvider;
 
+/**
+ * Supplies the Gemini Live raw-WebSocket endpoint.
+ *
+ * Google Gemini's Live WebSocket guide authenticates normal API keys with the
+ * `?key=` query parameter. This applies to the raw BidiGenerateContent socket;
+ * ephemeral Live tokens use a different constrained endpoint/access_token flow.
+ */
 public final class GeminiApiKeyEndpointProvider implements GeminiEndpointProvider {
     private static final String BASE_URL =
             "wss://generativelanguage.googleapis.com/ws/" +
@@ -25,20 +32,12 @@ public final class GeminiApiKeyEndpointProvider implements GeminiEndpointProvide
 
     @Override
     public String getWebSocketUrl() {
-        String apiKey = requireKey();
-
-        // Current AI Studio authorization keys use the AQ. prefix and are intended for header auth.
-        // Standard/legacy keys continue to follow the Live API raw WebSocket query-param examples.
-        if (apiKey.startsWith("AQ.")) {
-            return BASE_URL;
-        }
-
-        return BASE_URL + "?key=" + Uri.encode(apiKey);
+        return BASE_URL + "?key=" + Uri.encode(requireKey());
     }
 
     @Override
     public String getApiKeyHeader() {
-        String apiKey = requireKey();
-        return apiKey.startsWith("AQ.") ? apiKey : "";
+        // Raw Gemini Live WebSocket auth uses the URL query parameter.
+        return "";
     }
 }
