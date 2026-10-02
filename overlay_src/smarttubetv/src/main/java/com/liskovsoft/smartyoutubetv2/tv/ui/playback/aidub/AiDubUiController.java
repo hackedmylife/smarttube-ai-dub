@@ -23,6 +23,7 @@ public final class AiDubUiController {
 
     private AiDubController controller;
     private boolean enabled;
+    private boolean apiKeyRejected;
 
     public AiDubUiController(
             Context context,
@@ -43,7 +44,7 @@ public final class AiDubUiController {
     }
 
     public void onAction() {
-        if (!keyStore.hasApiKey()) {
+        if (!keyStore.hasApiKey() || apiKeyRejected) {
             showSetupDialog();
             return;
         }
@@ -82,9 +83,17 @@ public final class AiDubUiController {
         input.setText(keyStore.getApiKey());
         input.setSelectAllOnFocus(true);
 
+        String currentKey = keyStore.getApiKey();
+        String keyInfo = TextUtils.isEmpty(currentKey)
+                ? "Kayıtlı anahtar yok."
+                : "Kayıtlı anahtar: " +
+                    (currentKey.startsWith("AQ.") ? "AQ auth key" :
+                     currentKey.startsWith("AIza") ? "AIza standard key" : "bilinmeyen tür") +
+                    " • " + currentKey.length() + " karakter";
+
         new AlertDialog.Builder(context)
                 .setTitle("AI Türkçe Dublaj")
-                .setMessage("Gemini API anahtarını gir. Anahtar yalnızca bu cihazda saklanır; APK içine eklenmez.")
+                .setMessage("Gemini API anahtarını gir. Anahtar yalnızca bu cihazda saklanır; APK içine eklenmez.\n\n" + keyInfo)
                 .setView(input)
                 .setPositiveButton("Kaydet ve Başlat", (dialog, which) -> {
                     String value = input.getText() == null
@@ -96,6 +105,7 @@ public final class AiDubUiController {
                     }
 
                     keyStore.setApiKey(value);
+                    apiKeyRejected = false;
                     resetController();
                     ensureController();
 
@@ -106,6 +116,7 @@ public final class AiDubUiController {
                 })
                 .setNeutralButton("Anahtarı Sil", (dialog, which) -> {
                     keyStore.clear();
+                    apiKeyRejected = false;
                     enabled = false;
                     resetController();
                     setButtonEnabled(false);
@@ -135,6 +146,12 @@ public final class AiDubUiController {
         if (state == AiDubState.ERROR) {
             enabled = false;
             setButtonEnabled(false);
+            String raw = error == null || error.getMessage() == null ? "" : error.getMessage();
+            if (raw.contains("API key not valid")
+                    || raw.contains("API_KEY_INVALID")
+                    || raw.contains("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
+                apiKeyRejected = true;
+            }
             Toast.makeText(
                     context,
                     describeError(error),
