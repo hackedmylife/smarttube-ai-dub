@@ -1,7 +1,11 @@
 package com.liskovsoft.smartyoutubetv2.common.aidub;
 
 public final class AiDubConfig {
-    public static final String MODEL = "models/gemini-3.5-live-translate-preview";
+    // Natural Dub cascade: live ASR -> text translation -> controllable TTS.
+    public static final String TRANSCRIBE_MODEL = "models/gemini-3.5-transcribe-live";
+    public static final String TRANSLATION_MODEL = "gemini-3.5-flash-lite";
+    public static final String TTS_MODEL = "gemini-3.8-flash-lite-tts";
+    public static final String TTS_VOICE = "Sulafat";
     public static final String TARGET_LANGUAGE = "tr";
     public static final int GEMINI_INPUT_SAMPLE_RATE_HZ = 16_000;
     public static final int GEMINI_OUTPUT_SAMPLE_RATE_HZ = 24_000;
@@ -10,11 +14,19 @@ public final class AiDubConfig {
     public static final int INPUT_CHUNK_BYTES =
             GEMINI_INPUT_SAMPLE_RATE_HZ * PCM_BYTES_PER_SAMPLE * CHUNK_DURATION_MS / 1000;
 
-    // Keep the capture side low-latency, but give the translated output enough
-    // headroom to absorb the bursty delivery pattern of Live API audio frames.
+    // Commit stable interim transcript prefixes before the source speaker finishes
+    // the full sentence. This keeps cascade latency bounded without speaking every
+    // speculative ASR revision.
+    public static final int NATURAL_DUB_TARGET_WORDS = 8;
+    public static final int NATURAL_DUB_MIN_PUNCTUATION_WORDS = 5;
+    public static final int NATURAL_DUB_MAX_WORDS = 12;
+    public static final int MAX_PENDING_NATURAL_PHRASES = 32;
+
+    // Keep the capture side low-latency, but give generated TTS output enough
+    // headroom to absorb network/model jitter.
     public static final int MAX_PENDING_INPUT_CHUNKS = 20;
     public static final int MAX_PENDING_OUTPUT_CHUNKS = 256;
-    public static final int OUTPUT_PREBUFFER_MS = 350;
+    public static final int OUTPUT_PREBUFFER_MS = 250;
     public static final int OUTPUT_AUDIO_TRACK_BUFFER_MS = 1_200;
     public static final int OUTPUT_BYTES_PER_SECOND =
             GEMINI_OUTPUT_SAMPLE_RATE_HZ * PCM_BYTES_PER_SAMPLE;
