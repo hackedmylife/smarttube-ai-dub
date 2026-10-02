@@ -76,7 +76,7 @@ cat > "$UPSTREAM/common/src/stbeta/res/values/update_urls.xml" <<'EOF'
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string-array name="update_urls">
-        <item>https://github.com/hackedmylife/smarttube-ai-dub/releases/download/latest/smarttube_ai_dub.json</item>
+        <item>https://github.com/hackedmylife/smarttube-ai-dub/releases/download/ai-dub-latest/smarttube_ai_dub.json</item>
     </string-array>
 </resources>
 EOF
