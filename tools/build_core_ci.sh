@@ -5,10 +5,24 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${RUNNER_TEMP:-/tmp}/smarttube-ai-dub-build"
 UPSTREAM="$WORK/SmartTube"
 
+: "${AIDUB_KEYSTORE_B64:?AIDUB_KEYSTORE_B64 secret is required}"
+: "${AIDUB_KEYSTORE_PASSWORD:?AIDUB_KEYSTORE_PASSWORD secret is required}"
+AIDUB_BUILD_NUMBER="${GITHUB_RUN_NUMBER:-1}"
+
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
 git clone --recursive --branch 32.56s --depth 1   https://github.com/yuliskov/SmartTube.git "$UPSTREAM"
+
+SIGNING_KEYSTORE="$WORK/smarttube-ai-dub-release.jks"
+printf '%s' "$AIDUB_KEYSTORE_B64" | base64 --decode > "$SIGNING_KEYSTORE"
+chmod 600 "$SIGNING_KEYSTORE"
+cat > "$UPSTREAM/keystore.properties" <<EOF
+storeFile=$SIGNING_KEYSTORE
+storePassword=$AIDUB_KEYSTORE_PASSWORD
+keyAlias=aidub
+keyPassword=$AIDUB_KEYSTORE_PASSWORD
+EOF
 
 cp -R "$ROOT/overlay_src/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/aidub"   "$UPSTREAM/common/src/main/java/com/liskovsoft/smartyoutubetv2/common/"
 
@@ -61,6 +75,19 @@ text = p.read_text(encoding="utf-8")
 text = text.replace("SmartTube beta", "SmartTube AI Dub")
 p.write_text(text, encoding="utf-8")
 print("Renamed beta flavor to SmartTube AI Dub")
+PY
+
+python3 - "$UPSTREAM" "$AIDUB_BUILD_NUMBER" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+run = int(sys.argv[2])
+path = root / "smarttubetv/build.gradle"
+text = path.read_text(encoding="utf-8")
+text = text.replace("versionCode 2446", f"versionCode {900000 + run}", 1)
+text = text.replace('versionName "32.56"', f'versionName "0.8.{run}"', 1)
+path.write_text(text, encoding="utf-8")
+print(f"SmartTube AI Dub versionCode={900000 + run}, versionName=0.8.{run}")
 PY
 
 cd "$UPSTREAM"
