@@ -6,6 +6,11 @@ public final class AiDubConfig {
     public static final String TRANSLATION_MODEL = "gemini-3.5-flash-lite";
     public static final String TTS_MODEL = "gemini-3.8-flash-lite-tts";
     public static final String TTS_VOICE = "Sulafat";
+
+    // Kept only so the previous direct Live Translate implementation remains
+    // compilable as an emergency rollback path. Natural Dub does not use it.
+    public static final String MODEL = "models/gemini-3.5-live-translate-preview";
+
     public static final String TARGET_LANGUAGE = "tr";
     public static final int GEMINI_INPUT_SAMPLE_RATE_HZ = 16_000;
     public static final int GEMINI_OUTPUT_SAMPLE_RATE_HZ = 24_000;
