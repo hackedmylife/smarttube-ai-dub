@@ -169,6 +169,12 @@ public final class AiDubUiController {
         if (message.contains("400") || message.contains("INVALID_ARGUMENT")) {
             return "AI Dublaj: Gemini oturum ayarını reddetti (400)";
         }
+        if (message.contains("1008")) {
+            return "AI Dublaj: Gemini oturumu politika/ayar nedeniyle kapattı (1008)";
+        }
+        if (message.contains("1011")) {
+            return "AI Dublaj: Gemini sunucu hatası verdi (1011)";
+        }
         if (message.contains("SSL")) {
             return "AI Dublaj: güvenli bağlantı/TLS hatası";
         }
