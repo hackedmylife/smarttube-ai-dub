@@ -1,9 +1,11 @@
 package com.liskovsoft.smartyoutubetv2.common.aidub;
 
 public final class AiDubMutePolicy {
+    private static final float DUBBED_ORIGINAL_VOLUME_FACTOR = 0.18f;
+
     private final PlayerAudioController audioController;
     private boolean enabled;
-    private boolean originalMuted;
+    private boolean originalDucked;
     private float restoreVolume = 1.0f;
 
     public AiDubMutePolicy(PlayerAudioController audioController) {
@@ -18,7 +20,7 @@ public final class AiDubMutePolicy {
             return;
         }
         enabled = true;
-        originalMuted = false;
+        originalDucked = false;
         restoreVolume = audioController.getOriginalVolume();
     }
 
@@ -27,9 +29,12 @@ public final class AiDubMutePolicy {
             return;
         }
         if (state == AiDubState.DUBBING) {
-            if (!originalMuted) {
-                audioController.setOriginalVolume(0.0f);
-                originalMuted = true;
+            if (!originalDucked) {
+                float dubbedBackgroundVolume = Math.max(
+                        0.0f,
+                        Math.min(1.0f, restoreVolume * DUBBED_ORIGINAL_VOLUME_FACTOR));
+                audioController.setOriginalVolume(dubbedBackgroundVolume);
+                originalDucked = true;
             }
         } else {
             restoreOriginal();
@@ -45,9 +50,9 @@ public final class AiDubMutePolicy {
     }
 
     private void restoreOriginal() {
-        if (originalMuted) {
+        if (originalDucked) {
             audioController.setOriginalVolume(restoreVolume);
-            originalMuted = false;
+            originalDucked = false;
         }
     }
 }
