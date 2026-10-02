@@ -135,12 +135,9 @@ public final class AiDubUiController {
         if (state == AiDubState.ERROR) {
             enabled = false;
             setButtonEnabled(false);
-            String detail = error != null && !TextUtils.isEmpty(error.getMessage())
-                    ? ": " + error.getMessage()
-                    : "";
             Toast.makeText(
                     context,
-                    "AI Dublaj bağlantı hatası" + detail,
+                    "AI Dublaj bağlantı hatası",
                     Toast.LENGTH_LONG).show();
         } else if (state == AiDubState.OFF) {
             setButtonEnabled(false);
