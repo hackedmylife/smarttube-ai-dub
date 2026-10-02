@@ -6,6 +6,13 @@ on:
     branches:
       - ai-dub-core
 
+# The updater publishes to one rolling `ai-dub-latest` release. Serializing
+# builds prevents overlapping runs from deleting/re-uploading the same release
+# assets at the same time and leaving the update channel half-published.
+concurrency:
+  group: smarttube-ai-dub-release
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
