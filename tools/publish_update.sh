@@ -39,6 +39,7 @@ fi
 cat > "$DIST/smarttube_ai_dub.json" <<EOF
 {
   "package": {
+    "downloadUrl": "https://github.com/$REPO/releases/download/$TAG/smarttube_ai_dub.apk",
     "downloadUrlList_arm64-v8a": [
       "https://github.com/$REPO/releases/download/$TAG/smarttube_ai_dub_arm64-v8a.apk",
       "https://github.com/$REPO/releases/download/$TAG/smarttube_ai_dub.apk"
