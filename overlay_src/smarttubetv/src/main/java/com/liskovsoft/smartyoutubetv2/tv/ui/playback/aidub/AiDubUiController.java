@@ -132,7 +132,17 @@ public final class AiDubUiController {
         }
 
         AiDubServices.setEndpointProvider(new GeminiApiKeyEndpointProvider(keyStore));
-        controller = AiDubServices.createController(player, this::onStateChanged);
+        controller = AiDubServices.createController(player, new AiDubController.Listener() {
+            @Override
+            public void onStateChanged(AiDubState state, Throwable error) {
+                AiDubUiController.this.onStateChanged(state, error);
+            }
+
+            @Override
+            public void onDiagnostic(String message) {
+                AiDubUiController.this.onDiagnostic(message);
+            }
+        });
     }
 
     private void resetController() {
@@ -163,6 +173,13 @@ public final class AiDubUiController {
                 || state == AiDubState.DUBBING) {
             setButtonEnabled(true);
         }
+    }
+
+    private void onDiagnostic(String message) {
+        if (TextUtils.isEmpty(message)) {
+            return;
+        }
+        Toast.makeText(context, "AI Dublaj: " + message, Toast.LENGTH_SHORT).show();
     }
 
     private String describeError(Throwable error) {
