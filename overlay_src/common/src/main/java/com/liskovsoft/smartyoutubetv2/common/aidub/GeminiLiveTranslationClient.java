@@ -17,6 +17,14 @@ import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import okio.ByteString;
 
+/**
+ * Gemini 3.8 Live native-audio dubbing client.
+ *
+ * Audio is sent once over a persistent WebSocket and the model performs the
+ * spoken-dialogue understanding, Turkish translation and native speech output
+ * in the same live session. This intentionally avoids per-phrase REST calls,
+ * which are unsuitable for continuous TV dialogue on RPM-limited API tiers.
+ */
 public final class GeminiLiveTranslationClient {
     public interface Listener {
         void onReady();
@@ -26,7 +34,7 @@ public final class GeminiLiveTranslationClient {
         default void onDiagnostic(String message) {}
     }
 
-    private static final long SETUP_TIMEOUT_MS = 8_000L;
+    private static final long SETUP_TIMEOUT_MS = 10_000L;
 
     private final OkHttpClient httpClient;
     private final GeminiEndpointProvider endpointProvider;
@@ -38,6 +46,7 @@ public final class GeminiLiveTranslationClient {
     private volatile boolean setupComplete;
     private volatile boolean closed;
     private volatile boolean firstAudioSentNotified;
+    private volatile boolean firstOutputNotified;
     private long connectionGeneration;
 
     public GeminiLiveTranslationClient(
@@ -60,9 +69,10 @@ public final class GeminiLiveTranslationClient {
             pendingInput.clear();
             webSocket = null;
             firstAudioSentNotified = false;
+            firstOutputNotified = false;
             generation = ++connectionGeneration;
         }
-        new Thread(() -> openConnection(generation), "AiDubGeminiConnector").start();
+        new Thread(() -> openConnection(generation), "AiDubGemini38Connector").start();
     }
 
     private void openConnection(long generation) {
@@ -71,17 +81,15 @@ public final class GeminiLiveTranslationClient {
             if (endpoint == null || endpoint.trim().isEmpty()) {
                 throw new IllegalStateException("Gemini Live endpoint is empty");
             }
-            if (!isCurrentGeneration(generation)) {
-                return;
-            }
-            String apiKeyHeader = endpointProvider.getApiKeyHeader();
+            if (!isCurrentGeneration(generation)) return;
 
             Request.Builder requestBuilder = new Request.Builder().url(endpoint);
+            String apiKeyHeader = endpointProvider.getApiKeyHeader();
             if (apiKeyHeader != null && !apiKeyHeader.trim().isEmpty()) {
                 requestBuilder.header("x-goog-api-key", apiKeyHeader.trim());
             }
-            Request request = requestBuilder.build();
-            WebSocket socket = httpClient.newWebSocket(request, new SocketListener(generation));
+            WebSocket socket = httpClient.newWebSocket(
+                    requestBuilder.build(), new SocketListener(generation));
             if (!isCurrentGeneration(generation)) {
                 socket.close(1000, "stale AI dub endpoint");
             }
@@ -93,9 +101,7 @@ public final class GeminiLiveTranslationClient {
     }
 
     public void sendPcm16kMono(byte[] pcm16Le) {
-        if (pcm16Le == null || pcm16Le.length == 0 || closed) {
-            return;
-        }
+        if (pcm16Le == null || pcm16Le.length == 0 || closed) return;
         synchronized (lock) {
             if (!setupComplete || webSocket == null) {
                 if (pendingInput.size() >= AiDubConfig.MAX_PENDING_INPUT_CHUNKS) {
@@ -135,43 +141,60 @@ public final class GeminiLiveTranslationClient {
     }
 
     private String createSetupJson() throws JSONException {
-        JSONObject translationConfig = new JSONObject()
-                .put("targetLanguageCode", AiDubConfig.TARGET_LANGUAGE)
-                .put("echoTargetLanguage", false);
-
+        JSONObject prebuiltVoiceConfig = new JSONObject()
+                .put("voiceName", AiDubConfig.LIVE_VOICE);
+        JSONObject voiceConfig = new JSONObject()
+                .put("prebuiltVoiceConfig", prebuiltVoiceConfig);
+        JSONObject speechConfig = new JSONObject()
+                .put("voiceConfig", voiceConfig);
         JSONObject generationConfig = new JSONObject()
                 .put("responseModalities", new JSONArray().put("AUDIO"))
-                .put("translationConfig", translationConfig);
+                .put("speechConfig", speechConfig);
 
-        // Continuous video audio is not a turn-taking microphone conversation.
-        // The Live API defaults to START_OF_ACTIVITY_INTERRUPTS, which may cut
-        // the currently generated Turkish sentence whenever new source speech
-        // is detected. NO_INTERRUPTION lets the current translation finish.
+        // TV/video audio is continuous and must not barge into/cut off the
+        // Turkish sentence that is already being generated.
+        JSONObject automaticActivityDetection = new JSONObject()
+                .put("disabled", false)
+                .put("prefixPaddingMs", 40)
+                .put("silenceDurationMs", 420);
         JSONObject realtimeInputConfig = new JSONObject()
-                .put("activityHandling", "NO_INTERRUPTION");
+                .put("automaticActivityDetection", automaticActivityDetection)
+                .put("activityHandling", "NO_INTERRUPTION")
+                .put("turnCoverage", "TURN_INCLUDES_ONLY_ACTIVITY");
+
+        String instruction =
+                "You are a real-time Turkish dubbing engine for video. " +
+                "Listen to the incoming audio and translate only the spoken dialogue into natural spoken Turkish. " +
+                "Never answer the speaker, never comment, never explain and never add information. " +
+                "Preserve names, meaning, emotion, register and intent. " +
+                "Keep each Turkish line concise and close to the source speaking duration. " +
+                "Use fluent everyday Turkish with natural rhythm, phrasing and prosody, like a professional film dub. " +
+                "Ignore music, ambience, wind, sound effects and non-speech audio; do not describe them. " +
+                "If the spoken dialogue is already Turkish, reproduce it naturally without changing its meaning.";
+        JSONObject systemInstruction = new JSONObject()
+                .put("parts", new JSONArray().put(new JSONObject().put("text", instruction)));
 
         JSONObject setup = new JSONObject()
                 .put("model", AiDubConfig.MODEL)
                 .put("generationConfig", generationConfig)
+                .put("systemInstruction", systemInstruction)
                 .put("realtimeInputConfig", realtimeInputConfig);
         return new JSONObject().put("setup", setup).toString();
     }
 
     private void sendRealtimeAudio(byte[] pcm16Le) {
         WebSocket socket = webSocket;
-        if (socket == null || closed) {
-            return;
-        }
+        if (socket == null || closed) return;
         try {
             JSONObject audio = new JSONObject()
                     .put("data", Base64.encodeToString(pcm16Le, Base64.NO_WRAP))
                     .put("mimeType", "audio/pcm;rate=" + AiDubConfig.GEMINI_INPUT_SAMPLE_RATE_HZ);
             JSONObject realtimeInput = new JSONObject().put("audio", audio);
             if (!socket.send(new JSONObject().put("realtimeInput", realtimeInput).toString())) {
-                listener.onError(new IOException("Gemini WebSocket rejected audio frame"));
+                listener.onError(new IOException("Gemini 3.8 Live WebSocket rejected audio frame"));
             } else if (!firstAudioSentNotified) {
                 firstAudioSentNotified = true;
-                listener.onDiagnostic("Ses Gemini'ye gönderildi");
+                listener.onDiagnostic("Ses Gemini 3.8 Live'a akıyor");
             }
         } catch (JSONException error) {
             listener.onError(error);
@@ -200,9 +223,10 @@ public final class GeminiLiveTranslationClient {
                 int code = apiError.optInt("code", -1);
                 String status = apiError.optString("status", "");
                 String message = apiError.optString("message", "");
-                String detail = message.isEmpty() ? "" : " - " + sanitizeCloseReason(message);
+                String detail = message.isEmpty() ? "" : " - " + sanitize(message);
                 listener.onError(new IOException(
-                        "Gemini API " + code + (status.isEmpty() ? "" : " " + status) + detail));
+                        "Gemini 3.8 Live API " + code +
+                                (status.isEmpty() ? "" : " " + status) + detail));
                 return;
             }
 
@@ -210,8 +234,19 @@ public final class GeminiLiveTranslationClient {
                 markSetupComplete();
                 return;
             }
+
+            if (root.has("goAway")) {
+                listener.onDiagnostic("Gemini 3.8 Live oturumu yenileniyor");
+                listener.onClosed(1001, "Gemini goAway");
+                return;
+            }
+
             JSONObject serverContent = root.optJSONObject("serverContent");
             if (serverContent == null) return;
+            if (serverContent.optBoolean("interrupted", false)) {
+                listener.onDiagnostic("Gemini 3.8 Live çıktı kesintisi algılandı");
+            }
+
             JSONObject modelTurn = serverContent.optJSONObject("modelTurn");
             if (modelTurn == null) return;
             JSONArray parts = modelTurn.optJSONArray("parts");
@@ -227,11 +262,15 @@ public final class GeminiLiveTranslationClient {
                 if (data.isEmpty() || !mimeType.startsWith("audio/")) continue;
                 byte[] decoded = Base64.decode(data, Base64.DEFAULT);
                 if (decoded.length > 0) {
+                    if (!firstOutputNotified) {
+                        firstOutputNotified = true;
+                        listener.onDiagnostic("Gemini 3.8 Live Türkçe native audio başladı");
+                    }
                     listener.onTranslatedPcm(decoded);
                 }
             }
         } catch (Throwable error) {
-            listener.onError(error);
+            if (!closed) listener.onError(error);
         }
     }
 
@@ -244,28 +283,24 @@ public final class GeminiLiveTranslationClient {
                 return;
             }
             if (isCurrentGeneration(generation) && !setupComplete) {
-                listener.onError(new IOException("Gemini setup timeout (8s)"));
+                listener.onError(new IOException("Gemini 3.8 Live setup timeout (10s)"));
             }
-        }, "AiDubGeminiSetupWatchdog").start();
+        }, "AiDubGemini38SetupWatchdog").start();
     }
 
-    private static String sanitizeCloseReason(String reason) {
-        if (reason == null) {
-            return "";
-        }
-        String value = reason.replaceAll("[\\r\\n\\t]+", " ").trim();
-        if (value.length() > 180) {
-            value = value.substring(0, 180);
-        }
-        return value;
+    private static String sanitize(String reason) {
+        if (reason == null) return "";
+        String value = reason.replaceAll("[\\r\\n\\t]+", " ")
+                .replaceAll("\\s+", " ").trim();
+        return value.length() <= 180 ? value : value.substring(0, 180);
     }
 
     private static IOException safeTransportError(Throwable error, Response response) {
         if (response != null) {
-            return new IOException("Gemini WebSocket HTTP " + response.code());
+            return new IOException("Gemini 3.8 Live WebSocket HTTP " + response.code());
         }
         String type = error == null ? "Unknown" : error.getClass().getSimpleName();
-        return new IOException("Gemini WebSocket " + type);
+        return new IOException("Gemini 3.8 Live WebSocket " + type);
     }
 
     private boolean isCurrentGeneration(long generation) {
@@ -290,31 +325,27 @@ public final class GeminiLiveTranslationClient {
                 }
                 webSocket = socket;
             }
-            listener.onDiagnostic("Gemini WebSocket açıldı");
+            listener.onDiagnostic("Gemini 3.8 Live WebSocket açıldı");
             try {
                 if (!socket.send(createSetupJson())) {
-                    throw new IOException("Gemini WebSocket rejected setup frame");
+                    throw new IOException("Gemini 3.8 Live rejected setup frame");
                 }
-                listener.onDiagnostic("Gemini setup gönderildi");
+                listener.onDiagnostic("Gemini 3.8 Live setup gönderildi");
                 startSetupWatchdog(generation);
             } catch (Throwable error) {
-                listener.onError(new IOException("Gemini setup frame failed"));
+                listener.onError(new IOException("Gemini 3.8 Live setup frame failed"));
                 socket.close(1011, "setup failed");
             }
         }
 
         @Override
         public void onMessage(WebSocket socket, String text) {
-            if (isCurrentGeneration(generation)) {
-                handleMessage(text);
-            }
+            if (isCurrentGeneration(generation)) handleMessage(text);
         }
 
         @Override
         public void onMessage(WebSocket socket, ByteString bytes) {
-            if (isCurrentGeneration(generation)) {
-                handleMessage(bytes.utf8());
-            }
+            if (isCurrentGeneration(generation)) handleMessage(bytes.utf8());
         }
 
         @Override
@@ -333,7 +364,7 @@ public final class GeminiLiveTranslationClient {
             String phase = wasSetupComplete ? "after setupComplete" : "during setup";
             listener.onClosed(code, phase + (reason == null || reason.trim().isEmpty()
                     ? ""
-                    : " - " + sanitizeCloseReason(reason)));
+                    : " - " + sanitize(reason)));
         }
 
         @Override
