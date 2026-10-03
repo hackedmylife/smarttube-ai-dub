@@ -4,7 +4,7 @@ public final class AiDubMutePolicy {
     // Keep the original mix audible enough for ambience/music/effects while the
     // Turkish native-audio dub stays dominant. This is still whole-mix ducking,
     // so raising it too far would also make the source-language dialogue louder.
-    private static final float DUBBED_ORIGINAL_VOLUME_FACTOR = 0.32f;
+    private static final float DUBBED_ORIGINAL_VOLUME_FACTOR = 0.08f;
 
     private final PlayerAudioController audioController;
     private boolean enabled;

@@ -134,7 +134,20 @@ public final class AiDubAudioPlayer {
                 }
 
                 byte[] data = queue.pollFirst(250, TimeUnit.MILLISECONDS);
-                if (data == null) continue;
+                if (data == null) {
+                    // A short line can end before the prebuffer target. Play
+                    // its tail rather than waiting forever for another line.
+                    if (!playbackStarted && prebufferedBytes > 0) {
+                        synchronized (this) {
+                            if (running.get() && !paused.get() && audioTrack != null
+                                    && !playbackStarted && prebufferedBytes > 0) {
+                                audioTrack.play();
+                                playbackStarted = true;
+                            }
+                        }
+                    }
+                    continue;
+                }
 
                 AudioTrack track = audioTrack;
                 if (track == null) continue;
@@ -155,7 +168,14 @@ public final class AiDubAudioPlayer {
                 && offset < data.length) {
             int written;
             try {
-                written = track.write(data, offset, data.length - offset);
+                // AudioTrack.write is blocking. Before play(), never write
+                // a whole large packet: a full stopped track cannot drain.
+                int writeBytes = data.length - offset;
+                if (!playbackStarted) {
+                    writeBytes = Math.min(writeBytes,
+                            AiDubConfig.OUTPUT_PREBUFFER_BYTES - prebufferedBytes);
+                }
+                written = track.write(data, offset, writeBytes);
             } catch (IllegalStateException error) {
                 return;
             }

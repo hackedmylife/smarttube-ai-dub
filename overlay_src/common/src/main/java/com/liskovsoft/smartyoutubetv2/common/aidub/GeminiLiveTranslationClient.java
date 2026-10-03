@@ -34,7 +34,7 @@ public final class GeminiLiveTranslationClient {
         default void onDiagnostic(String message) {}
     }
 
-    private static final long SETUP_TIMEOUT_MS = 10_000L;
+    private static final long SETUP_TIMEOUT_MS = 30_000L;
 
     private final OkHttpClient httpClient;
     private final GeminiEndpointProvider endpointProvider;
@@ -247,6 +247,9 @@ public final class GeminiLiveTranslationClient {
                 listener.onDiagnostic("Gemini 3.8 Live çıktı kesintisi algılandı");
             }
 
+            if (serverContent.optBoolean("turnComplete", false)) {
+                listener.onDiagnostic("Gemini Live dublaj cümlesi tamamlandı; dinleme sürüyor");
+            }
             JSONObject modelTurn = serverContent.optJSONObject("modelTurn");
             if (modelTurn == null) return;
             JSONArray parts = modelTurn.optJSONArray("parts");
@@ -282,8 +285,14 @@ public final class GeminiLiveTranslationClient {
                 Thread.currentThread().interrupt();
                 return;
             }
-            if (isCurrentGeneration(generation) && !setupComplete) {
-                listener.onError(new IOException("Gemini 3.8 Live setup timeout (10s)"));
+            synchronized (lock) {
+                if (closed || generation != connectionGeneration || setupComplete) return;
+                // Retire this socket once. Late failure/close callbacks must
+                // not schedule another reconnect for the same connection.
+                closed = true;
+            }
+            {
+                listener.onError(new IOException("Gemini 3.8 Live setup timeout (30s)"));
             }
         }, "AiDubGemini38SetupWatchdog").start();
     }
@@ -358,6 +367,7 @@ public final class GeminiLiveTranslationClient {
             if (!isCurrentGeneration(generation)) return;
             final boolean wasSetupComplete = setupComplete;
             synchronized (lock) {
+                closed = true;
                 setupComplete = false;
                 webSocket = null;
             }
@@ -371,6 +381,7 @@ public final class GeminiLiveTranslationClient {
         public void onFailure(WebSocket socket, Throwable t, Response response) {
             if (!isCurrentGeneration(generation)) return;
             synchronized (lock) {
+                closed = true;
                 setupComplete = false;
                 webSocket = null;
             }

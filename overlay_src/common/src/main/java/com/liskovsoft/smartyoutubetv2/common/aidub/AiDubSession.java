@@ -157,7 +157,6 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     @Override
     public void onReady() {
         needsReconnect = false;
-        reconnectAttempts = 0;
         reconnecting.set(false);
         listener.onDiagnostic(firstTranslatedPcmNotified
                 ? "Gemini 3.8 Live dublaj bağlantısı yenilendi"
@@ -178,6 +177,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         if (running.get() && !paused.get()
                 && (state == AiDubState.READY || state == AiDubState.DUBBING)
                 && pcm24kMono16Le != null && pcm24kMono16Le.length > 0) {
+            reconnectAttempts = 0;
             if (!firstTranslatedPcmNotified) {
                 firstTranslatedPcmNotified = true;
                 listener.onDiagnostic("Gemini 3.8 Live Türkçe dublaj sesi geldi");
@@ -192,7 +192,6 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         if (!running.get() || state == AiDubState.ERROR) return;
         if (isRecoverableLiveError(error)) {
             needsReconnect = true;
-            reconnecting.set(false);
             requestReconnect(error == null ? "bağlantı hatası" : safeMessage(error));
             return;
         }
@@ -208,7 +207,6 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     public void onClosed(int code, String reason) {
         if (!running.get() || state == AiDubState.ERROR) return;
         needsReconnect = true;
-        reconnecting.set(false);
         String detail = reason == null || reason.trim().isEmpty()
                 ? ""
                 : " - " + reason.trim();
@@ -297,7 +295,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
                 chunker.reset();
                 rotationGeneration++;
                 needsReconnect = false;
+                // Keep scheduling guarded until this attempt starts. A new
+                // attempt is permitted only after a subsequent socket event.
                 liveDubClient.reconnect();
+                reconnecting.set(false);
             }
         }, "AiDubLiveReconnect").start();
     }

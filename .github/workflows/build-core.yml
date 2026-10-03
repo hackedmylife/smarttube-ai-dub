@@ -33,6 +33,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Check audio buffering and volume regression
+        run: bash tools/check_playback.sh
+
       - name: Build permanently signed SmartTube AI Dub
         shell: bash
         env:
