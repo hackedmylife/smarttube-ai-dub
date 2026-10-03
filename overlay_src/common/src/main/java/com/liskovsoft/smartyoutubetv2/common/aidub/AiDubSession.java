@@ -17,6 +17,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     private static final long TRANSCRIBE_ROTATION_MS = 9L * 60L * 1000L;
     private static final int MAX_RECONNECT_ATTEMPTS = 6;
     private static final long RECONNECT_BASE_DELAY_MS = 300L;
+    private static final long PIPELINE_BACKOFF_BASE_MS = 750L;
 
     private static final class CapturedPcm {
         final byte[] data;
@@ -48,6 +49,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     private volatile boolean firstTranslatedPcmNotified;
     private volatile boolean needsReconnect;
     private volatile int reconnectAttempts;
+    private volatile int transientPipelineErrors;
     private volatile long rotationGeneration;
 
     public AiDubSession(
@@ -67,6 +69,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         reconnecting.set(false);
         needsReconnect = false;
         reconnectAttempts = 0;
+        transientPipelineErrors = 0;
         rotationGeneration++;
         firstCapturedPcmNotified = false;
         firstTranslatedPcmNotified = false;
@@ -93,6 +96,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         reconnecting.set(false);
         needsReconnect = false;
         reconnectAttempts = 0;
+        transientPipelineErrors = 0;
         rotationGeneration++;
         AiDubRuntime.clearActiveSink(this);
         Thread worker = captureWorker;
@@ -127,6 +131,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         reconnecting.set(false);
         needsReconnect = false;
         reconnectAttempts = 0;
+        transientPipelineErrors = 0;
         resetPipeline();
         setState(AiDubState.CONNECTING, null);
         naturalDubClient.reconnect();
@@ -181,6 +186,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         if (running.get() && !paused.get()
                 && (state == AiDubState.READY || state == AiDubState.DUBBING)
                 && pcm24kMono16Le != null && pcm24kMono16Le.length > 0) {
+            transientPipelineErrors = 0;
             if (!firstTranslatedPcmNotified) {
                 firstTranslatedPcmNotified = true;
                 listener.onDiagnostic("Doğal Türkçe dublaj sesi geldi");
@@ -199,6 +205,18 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
             needsReconnect = true;
             reconnecting.set(false);
             requestReconnect(error == null ? "bağlantı hatası" : safeMessage(error));
+            return;
+        }
+        if (isRecoverablePipelineServiceError(error)) {
+            int failures = Math.min(++transientPipelineErrors, 4);
+            long delayMs = Math.min(6_000L,
+                    PIPELINE_BACKOFF_BASE_MS * (1L << Math.max(0, failures - 1)));
+            listener.onDiagnostic("Gemini servis yoğunluğu; doğal dublaj devam edecek");
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
             return;
         }
         enterFatalError(error);
@@ -324,6 +342,18 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
                 || message.contains("live transcribe 502")
                 || message.contains("live transcribe 503")
                 || message.contains("live transcribe 504");
+    }
+
+    private boolean isRecoverablePipelineServiceError(Throwable error) {
+        String message = safeMessage(error).toLowerCase();
+        boolean pipelineStage = message.contains("gemini translation http")
+                || message.contains("gemini tts http");
+        if (!pipelineStage) return false;
+        return message.contains("429")
+                || message.contains("500")
+                || message.contains("502")
+                || message.contains("503")
+                || message.contains("504");
     }
 
     private synchronized void enterFatalError(Throwable error) {
