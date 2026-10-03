@@ -1,9 +1,10 @@
 package com.liskovsoft.smartyoutubetv2.common.aidub;
 
 public final class AiDubMutePolicy {
-    // Keep enough of the source mix for ambience/music/effects while pushing the
-    // original spoken language clearly behind the Turkish dub.
-    private static final float DUBBED_ORIGINAL_VOLUME_FACTOR = 0.28f;
+    // Keep the original mix audible enough for ambience/music/effects while the
+    // Turkish native-audio dub stays dominant. This is still whole-mix ducking,
+    // so raising it too far would also make the source-language dialogue louder.
+    private static final float DUBBED_ORIGINAL_VOLUME_FACTOR = 0.32f;
 
     private final PlayerAudioController audioController;
     private boolean enabled;
@@ -27,9 +28,8 @@ public final class AiDubMutePolicy {
     public synchronized void onStateChanged(AiDubState state) {
         if (!enabled) return;
 
-        // Duck as soon as transcription is ready, not only after the first TTS
-        // clip arrives. This avoids a loud source-language phrase followed by a
-        // delayed Turkish duplicate while the cascade warms up.
+        // Duck as soon as the Live session is ready so the viewer doesn't hear
+        // a loud source phrase immediately followed by the Turkish equivalent.
         if (state == AiDubState.READY || state == AiDubState.DUBBING) {
             if (!originalDucked) {
                 float dubbedBackgroundVolume = Math.max(
