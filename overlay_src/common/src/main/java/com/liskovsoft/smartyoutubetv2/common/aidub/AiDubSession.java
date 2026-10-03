@@ -14,6 +14,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         default void onDiagnostic(String message) {}
     }
 
+    private static final long TRANSCRIBE_ROTATION_MS = 9L * 60L * 1000L;
+    private static final int MAX_RECONNECT_ATTEMPTS = 6;
+    private static final long RECONNECT_BASE_DELAY_MS = 300L;
+
     private static final class CapturedPcm {
         final byte[] data;
         final int sampleRateHz;
@@ -36,11 +40,15 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
             new LinkedBlockingDeque<>(AiDubConfig.MAX_PENDING_INPUT_CHUNKS * 2);
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean paused = new AtomicBoolean(false);
+    private final AtomicBoolean reconnecting = new AtomicBoolean(false);
 
     private volatile Thread captureWorker;
     private volatile AiDubState state = AiDubState.OFF;
     private volatile boolean firstCapturedPcmNotified;
     private volatile boolean firstTranslatedPcmNotified;
+    private volatile boolean needsReconnect;
+    private volatile int reconnectAttempts;
+    private volatile long rotationGeneration;
 
     public AiDubSession(
             OkHttpClient httpClient,
@@ -56,6 +64,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     public synchronized void start() {
         if (running.get()) return;
         paused.set(false);
+        reconnecting.set(false);
+        needsReconnect = false;
+        reconnectAttempts = 0;
+        rotationGeneration++;
         firstCapturedPcmNotified = false;
         firstTranslatedPcmNotified = false;
         setState(AiDubState.CONNECTING, null);
@@ -78,6 +90,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
     public synchronized void stop() {
         if (!running.getAndSet(false)) return;
         paused.set(false);
+        reconnecting.set(false);
+        needsReconnect = false;
+        reconnectAttempts = 0;
+        rotationGeneration++;
         AiDubRuntime.clearActiveSink(this);
         Thread worker = captureWorker;
         captureWorker = null;
@@ -95,6 +111,9 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
             resetPipeline();
         } else {
             audioPlayer.setPaused(false);
+            if (needsReconnect) {
+                requestReconnect("oynatma devam etti");
+            }
         }
     }
 
@@ -104,6 +123,10 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     public synchronized void restartAfterDiscontinuity() {
         if (!running.get() || state == AiDubState.ERROR) return;
+        rotationGeneration++;
+        reconnecting.set(false);
+        needsReconnect = false;
+        reconnectAttempts = 0;
         resetPipeline();
         setState(AiDubState.CONNECTING, null);
         naturalDubClient.reconnect();
@@ -133,8 +156,24 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     @Override
     public void onReady() {
-        listener.onDiagnostic("Doğal dublaj transkripsiyonu hazır");
-        setState(AiDubState.READY, null);
+        needsReconnect = false;
+        reconnectAttempts = 0;
+        reconnecting.set(false);
+        listener.onDiagnostic(firstTranslatedPcmNotified
+                ? "Doğal dublaj transkripsiyonu yeniden bağlandı"
+                : "Doğal dublaj transkripsiyonu hazır");
+
+        // A reconnect must not make the UI/mute policy briefly fall back to the
+        // original language. Once dubbing has started, keep the DUBBING state
+        // across WebSocket rotations and resume feeding Turkish PCM seamlessly.
+        if (firstTranslatedPcmNotified) {
+            if (state != AiDubState.DUBBING) {
+                setState(AiDubState.DUBBING, null);
+            }
+        } else {
+            setState(AiDubState.READY, null);
+        }
+        scheduleTranscribeRotation();
     }
 
     @Override
@@ -155,12 +194,14 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     @Override
     public void onError(Throwable error) {
-        if (running.get() && state != AiDubState.ERROR) {
-            AiDubRuntime.clearActiveSink(this);
-            resetPipeline();
-            naturalDubClient.close();
-            setState(AiDubState.ERROR, error);
+        if (!running.get() || state == AiDubState.ERROR) return;
+        if (isRecoverableTranscribeError(error)) {
+            needsReconnect = true;
+            reconnecting.set(false);
+            requestReconnect(error == null ? "bağlantı hatası" : safeMessage(error));
+            return;
         }
+        enterFatalError(error);
     }
 
     @Override
@@ -170,13 +211,13 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
 
     @Override
     public void onClosed(int code, String reason) {
-        if (running.get() && state != AiDubState.ERROR) {
-            String detail = reason == null || reason.trim().isEmpty()
-                    ? ""
-                    : " - " + reason.trim();
-            onError(new IllegalStateException(
-                    "Gemini Transcribe closed (" + code + ")" + detail));
-        }
+        if (!running.get() || state == AiDubState.ERROR) return;
+        needsReconnect = true;
+        reconnecting.set(false);
+        String detail = reason == null || reason.trim().isEmpty()
+                ? ""
+                : " - " + reason.trim();
+        requestReconnect("Gemini Transcribe closed (" + code + ")" + detail);
     }
 
     private void runCaptureWorker() {
@@ -193,9 +234,114 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
                 Thread.currentThread().interrupt();
                 return;
             } catch (Throwable error) {
-                onError(error);
+                enterFatalError(error);
             }
         }
+    }
+
+    private void scheduleTranscribeRotation() {
+        final long generation = ++rotationGeneration;
+        new Thread(() -> {
+            try {
+                Thread.sleep(TRANSCRIBE_ROTATION_MS);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (!running.get() || state == AiDubState.ERROR || generation != rotationGeneration) {
+                return;
+            }
+            if (paused.get()) {
+                needsReconnect = true;
+                listener.onDiagnostic("Gemini Transcribe oturumu oynatma devam edince yenilenecek");
+                return;
+            }
+            needsReconnect = true;
+            reconnecting.set(false);
+            requestReconnect("planlı 9 dakikalık oturum yenileme");
+        }, "AiDubTranscribeRotation").start();
+    }
+
+    private void requestReconnect(String reason) {
+        if (!running.get() || state == AiDubState.ERROR) return;
+        if (paused.get()) {
+            needsReconnect = true;
+            return;
+        }
+        if (!reconnecting.compareAndSet(false, true)) return;
+
+        final int attempt = ++reconnectAttempts;
+        if (attempt > MAX_RECONNECT_ATTEMPTS) {
+            reconnecting.set(false);
+            enterFatalError(new IllegalStateException(
+                    "Gemini Transcribe yeniden bağlanamadı: " + reason));
+            return;
+        }
+
+        long multiplier = 1L << Math.min(attempt - 1, 3);
+        final long delayMs = Math.min(2_400L, RECONNECT_BASE_DELAY_MS * multiplier);
+        listener.onDiagnostic("Gemini Transcribe bağlantısı yenileniyor (" + attempt + "/" +
+                MAX_RECONNECT_ATTEMPTS + ")");
+
+        new Thread(() -> {
+            try {
+                Thread.sleep(delayMs);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                reconnecting.set(false);
+                return;
+            }
+
+            synchronized (AiDubSession.this) {
+                if (!running.get() || paused.get() || state == AiDubState.ERROR) {
+                    reconnecting.set(false);
+                    return;
+                }
+
+                // Drop only source-ASR state. Do not flush AudioTrack: Turkish
+                // audio already synthesized before the rotation should finish
+                // playing instead of being cut off mid-sentence.
+                captureQueue.clear();
+                resampler.reset();
+                chunker.reset();
+                rotationGeneration++;
+                needsReconnect = false;
+                naturalDubClient.reconnect();
+            }
+        }, "AiDubTranscribeReconnect").start();
+    }
+
+    private boolean isRecoverableTranscribeError(Throwable error) {
+        String message = safeMessage(error).toLowerCase();
+        if (message.contains("401") || message.contains("403")
+                || message.contains("api key") || message.contains("permission_denied")) {
+            return false;
+        }
+        return message.contains("gemini websocket")
+                || message.contains("transcribe setup")
+                || message.contains("live transcribe 429")
+                || message.contains("live transcribe 500")
+                || message.contains("live transcribe 502")
+                || message.contains("live transcribe 503")
+                || message.contains("live transcribe 504");
+    }
+
+    private synchronized void enterFatalError(Throwable error) {
+        if (!running.get() || state == AiDubState.ERROR) return;
+        reconnecting.set(false);
+        needsReconnect = false;
+        rotationGeneration++;
+        AiDubRuntime.clearActiveSink(this);
+        resetPipeline();
+        naturalDubClient.close();
+        setState(AiDubState.ERROR, error);
+    }
+
+    private static String safeMessage(Throwable error) {
+        if (error == null || error.getMessage() == null) return "bilinmeyen hata";
+        String message = error.getMessage().replaceAll("[\\r\\n\\t]+", " ")
+                .replaceAll("\\s+", " ").trim();
+        return message.length() <= 180 ? message : message.substring(0, 180);
     }
 
     private void resetPipeline() {
