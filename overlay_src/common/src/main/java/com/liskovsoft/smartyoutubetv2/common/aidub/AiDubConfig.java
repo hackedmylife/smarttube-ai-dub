@@ -1,11 +1,10 @@
 package com.liskovsoft.smartyoutubetv2.common.aidub;
 
 public final class AiDubConfig {
-    // Primary low-latency dubbing engine. Gemini 3.8 Live performs audio ->
-    // Turkish native audio in one persistent WebSocket session, avoiding the
-    // per-phrase REST Translation/TTS request pressure that caused HTTP 429s.
-    public static final String MODEL = "models/gemini-3.8-live";
-    public static final String LIVE_VOICE = "Puck";
+    // Dedicated continuous speech translation, rather than a conversational
+    // agent prompted to translate after each detected turn.
+    public static final String MODEL = "models/gemini-3.5-live-translate-preview";
+    public static final String LIVE_VOICE = "Puck"; // Legacy agent rollback only.
 
     // Cascade model constants are retained only as an emergency rollback path.
     public static final String TRANSCRIBE_MODEL = "models/gemini-3.5-transcribe-live";

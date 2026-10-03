@@ -159,8 +159,8 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         needsReconnect = false;
         reconnecting.set(false);
         listener.onDiagnostic(firstTranslatedPcmNotified
-                ? "Gemini 3.8 Live dublaj bağlantısı yenilendi"
-                : "Gemini 3.8 Live doğal dublaj hazır");
+                ? "Gemini Live Translate dublaj bağlantısı yenilendi"
+                : "Gemini Live Translate sürekli çeviri hazır");
 
         // Once Turkish output has started, never bounce state back to READY on
         // routine socket rotations; keeping DUBBING also keeps source ducking.
@@ -180,7 +180,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
             reconnectAttempts = 0;
             if (!firstTranslatedPcmNotified) {
                 firstTranslatedPcmNotified = true;
-                listener.onDiagnostic("Gemini 3.8 Live Türkçe dublaj sesi geldi");
+                listener.onDiagnostic("Gemini Live Translate Türkçe çeviri sesi geldi");
             }
             if (state == AiDubState.READY) setState(AiDubState.DUBBING, null);
             audioPlayer.enqueue(pcm24kMono16Le);
@@ -210,7 +210,7 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         String detail = reason == null || reason.trim().isEmpty()
                 ? ""
                 : " - " + reason.trim();
-        requestReconnect("Gemini 3.8 Live closed (" + code + ")" + detail);
+        requestReconnect("Gemini Live Translate closed (" + code + ")" + detail);
     }
 
     private void runCaptureWorker() {
@@ -264,13 +264,13 @@ public final class AiDubSession implements AiDubRuntime.PcmSink,
         if (attempt > MAX_RECONNECT_ATTEMPTS) {
             reconnecting.set(false);
             enterFatalError(new IllegalStateException(
-                    "Gemini 3.8 Live yeniden bağlanamadı: " + reason));
+                    "Gemini Live Translate yeniden bağlanamadı: " + reason));
             return;
         }
 
         long multiplier = 1L << Math.min(attempt - 1, 4);
         final long delayMs = Math.min(4_000L, RECONNECT_BASE_DELAY_MS * multiplier);
-        listener.onDiagnostic("Gemini 3.8 Live bağlantısı yenileniyor (" + attempt + "/" +
+        listener.onDiagnostic("Gemini Live Translate bağlantısı yenileniyor (" + attempt + "/" +
                 MAX_RECONNECT_ATTEMPTS + ")");
 
         new Thread(() -> {
