@@ -4,7 +4,11 @@ public final class AiDubConfig {
     // Natural Dub cascade: live ASR -> text translation -> controllable TTS.
     public static final String TRANSCRIBE_MODEL = "models/gemini-3.5-transcribe-live";
     public static final String TRANSLATION_MODEL = "gemini-3.5-flash-lite";
-    public static final String TTS_MODEL = "gemini-3.8-flash-lite-tts";
+
+    // Quality-first TTS. Gemini 3.8 Flash TTS is the higher-fidelity sibling of
+    // Flash-Lite and is better suited to nuanced dubbing/prosody. We keep the
+    // same 24 kHz PCM output contract and voice so the playback path is unchanged.
+    public static final String TTS_MODEL = "gemini-3.8-flash-tts";
     public static final String TTS_VOICE = "Sulafat";
 
     // Kept only so the previous direct Live Translate implementation remains
